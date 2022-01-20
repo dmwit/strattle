@@ -79,25 +79,45 @@ namedStrategies :: [(String, Strategy)]
 namedStrategies = tail [undefined
     , ("alphabetical order", minStrat)
     , ("maximum entropy", maxEntropyStrat)
+    , ("sum of squares", lNormStrat 2)
+    , ("sum of cubes", lNormStrat 3)
+    , ("sum of quads", lNormStrat 4)
+    , ("worst case", lInfinityNormStrat)
+    , ("clue count", clueCountStrat)
     ]
 
 minStrat :: Strategy
 minStrat = S.findMin . possibleSolutions
 
-entropy :: (Foldable f, Functor f) => f Int -> Double
-entropy ns = -sum (h <$> ns) where
+negEntropy :: (Foldable f, Functor f) => f Int -> Double
+negEntropy ns = sum (h <$> ns) where
     h n = let p = fromIntegral n / denom in p * log p
     denom = fromIntegral (sum ns) :: Double
 
-maximumOn :: (Foldable f, Ord b) => (a -> b) -> f a -> a
-maximumOn f = id
-    . (\(Just (Max (Arg _ a))) -> a)
-    . foldMap (\a -> Just (Max (Arg (f a) a)))
+minimumOn :: (Foldable f, Ord b) => (a -> b) -> f a -> a
+minimumOn f = id
+    . (\(Just (Min (Arg _ a))) -> a)
+    . foldMap (\a -> Just (Min (Arg (f a) a)))
+
+-- If your strategy only cares about how many solutions are left in each
+-- category in the next step, you can use this to pick the guess that maximizes
+-- some metric on the partitioning.
+sizedStrat :: Ord a => (Map Clue Int -> a) -> Strategy
+sizedStrat f (Parameters gs ss) = minimumOn (\g -> f (S.size <$> partition g ss)) gs
 
 maxEntropyStrat :: Strategy
-maxEntropyStrat (Parameters gs ss) = maximumOn
-    (\g -> entropy (S.size <$> partition g ss))
-    gs
+maxEntropyStrat = sizedStrat negEntropy
+
+-- These next two avoid taking absolute values under the assumption that the
+-- size of a set is always non-negative anyway.
+lNormStrat :: Int -> Strategy
+lNormStrat l = sizedStrat (sum . fmap (^l))
+
+lInfinityNormStrat :: Strategy
+lInfinityNormStrat = sizedStrat maximum
+
+clueCountStrat :: Strategy
+clueCountStrat = sizedStrat (negate . M.size)
 
 pp :: (Text, Clue) -> String
 pp (guess, clue) = concat (zipWith go (T.unpack guess) clue) where
@@ -116,7 +136,7 @@ main = do
     params <- pure Parameters
         <*> loadWordList "all.txt"
         <*> loadWordList "play.txt"
-    printStrategy params maxEntropyStrat
+    -- printStrategy params maxEntropyStrat
     printf header
     for_ namedStrategies $ \(name, strat) -> do
         let (d, a) = evaluateStrategy params strat
